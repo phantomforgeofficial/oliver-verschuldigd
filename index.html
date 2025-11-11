@@ -59,10 +59,10 @@
   </div>
 
   <script type="module">
-    // ---- 1) VUL JOUW FIREBASE CONFIG IN ----
-    // Maak een Firebase-project aan op https://console.firebase.google.com
-    // Schakel Authentication (Google) en Firestore Database in.
-    // Vervang onderstaande config door jouw projectconfig.
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
+    import { getFirestore, doc, getDoc, onSnapshot, runTransaction, setDoc } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
+
     const firebaseConfig = {
       apiKey: "AIzaSyBAu9cAg4BDojNfNSo-8zW3_XcEe1z89Lw",
       authDomain: "mijn-totaal.firebaseapp.com",
@@ -73,14 +73,7 @@
       measurementId: "G-6Y25W4YXDF"
     };
 
-    // ---- 2) ZET HIER JE EIGEN UID ALS ADMIN ----
-    // Na het eerste inloggen kun je je UID uit de console halen (of in de Firestore Rules gebruiken).
-    const ADMIN_UID = "YOUR_UID";
-
-    // ---- Firebase SDK imports ----
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
-    import { getFirestore, doc, getDoc, onSnapshot, runTransaction, setDoc } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
+    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2";
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -91,30 +84,23 @@
 
     const totalRef = doc(db, 'totals', 'main');
 
-    // Realtime weergave van het totaal (iedereen mag lezen)
     onSnapshot(totalRef, snap => {
       const data = snap.data();
       const cents = data?.cents ?? 0;
       el('totalAmount').textContent = fmt.format(cents/100);
     });
 
-    function setStatus(msg, type='info'){
-      el('status').textContent = msg || '';
-    }
+    function setStatus(msg){ el('status').textContent = msg || ''; }
 
     function parseEuro(input){
-      // accepteert 1.234,56 of 1234,56 of 12, of 12.34 (we vervangen komma met punt indien nodig)
       const s = String(input).trim().replace(/\s+/g,'');
       if(!s) return null;
-      // verwijder duizendt. punten en normaliseer komma -> punt
       const norm = s.replace(/\./g,'').replace(',', '.');
       const val = Number(norm);
       if(!isFinite(val)) return null;
-      // Afronden naar centen
       return Math.round(val * 100);
     }
 
-    // Auth UI
     const signInBtn = el('signIn');
     const signOutBtn = el('signOut');
     const who = el('who');
@@ -135,7 +121,6 @@
         who.textContent = user.email || user.uid;
         signInBtn.classList.add('hidden');
         signOutBtn.classList.remove('hidden');
-        // Alleen admin ziet de knoppen om te wijzigen
         if(user.uid === ADMIN_UID){
           adminPanel.classList.remove('hidden');
         } else {
@@ -150,7 +135,6 @@
       }
     });
 
-    // Totaal verhogen via transactie (atomic, geen race conditions)
     el('addBtn').addEventListener('click', async ()=>{
       setStatus('');
       const centsToAdd = parseEuro(el('amountInput').value);
@@ -166,7 +150,6 @@
       }catch(e){ setStatus('Kon niet toevoegen: ' + e.message); }
     });
 
-    // (Optioneel) reset naar 0 — blijft door Firestore Rules beschermd
     el('resetBtn').addEventListener('click', async ()=>{
       try{
         await setDoc(totalRef, { cents: 0 }, { merge:true });
