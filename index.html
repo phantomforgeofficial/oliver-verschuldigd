@@ -47,7 +47,7 @@
         <input id="lastName" type="text" placeholder="Achternaam" />
         <button id="saveProfile" class="primary">Naam opslaan</button>
       </div>
-      <p class="muted">Vul je voor- en achternaam in. Je rekening wordt in lijsten getoond als "Voornaam Achternaam".</p>
+      <p class="muted">Vul je voor- en achternaam in. Je rekening wordt in lijsten getoond als "Voornaam Achternaam". Een naam kan maar aan één e‑mail gekoppeld zijn.</p>
     </div>
 
     <!-- Rekening-kiezer -->
@@ -123,8 +123,8 @@
       appId: "1:222510110794:web:10e3aca61a30f9a6006eb3",
       measurementId: "G-6Y25W4YXDF"
     };
-    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2"; // vaste fallback
-const ADMIN_EMAIL = null; // optioneel: zet hier je admin e-mail, bv. "jij@voorbeeld.nl"
+    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2"; // vaste admin UID
+    const ADMIN_EMAIL = null; // optioneel admin e-mail
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -148,10 +148,9 @@ const ADMIN_EMAIL = null; // optioneel: zet hier je admin e-mail, bv. "jij@voorb
     const rightsAccount=el('rightsAccount'), rightsList=el('rightsList');
 
     let currentUser=null, selectedAccountId=null, unsubscribeTotal=null;
-let isAdmin=false; let currentRole=null; // debug/rolstatus
+    let isAdmin=false; let currentRole=null;
     const provider=new GoogleAuthProvider();
-    // Toon accountkeuze steeds, helpt bij meerdere Google-accounts
-    try{ provider.setCustomParameters({ prompt: 'select_account' }); }catch(_){}
+    try{ provider.setCustomParameters({ prompt: 'select_account' }); }catch(_){}}
 
     function setStatus(s=''){statusEl.textContent=s;}
 
@@ -163,12 +162,22 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       return isFinite(val)?Math.round(val*100):null;
     }
 
-    // Profiel opslag: profiles/<uid> { firstName, lastName, email }
+    // ===== Naam-uniciteit helpers =====
+    function normalizeName(s){
+      return String(s||'')
+        .normalize('NFD').replace(/\p{Diacritic}+/gu,'')
+        .toLowerCase().trim().replace(/\s+/g,' ');
+    }
+    function makeFullKey(first,last){
+      return normalizeName(first) + ' ' + normalizeName(last);
+    }
+
+    // Profiel opslag: profiles/<uid> { firstName, lastName, email, fullKey }
     async function ensureProfile(uid, email){
       const pRef = doc(db,'profiles',uid);
       const s = await getDoc(pRef);
       if(!s.exists()){
-        await setDoc(pRef,{ firstName:'', lastName:'', email: email||'' });
+        await setDoc(pRef,{ firstName:'', lastName:'', email: email||'', fullKey:'' });
       }
       return pRef;
     }
@@ -195,17 +204,15 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       return ref;
     }
 
+    // ===== Auth =====
     signInBtn.onclick=async()=>{
-      try{
-        await signInWithPopup(auth, provider);
-      }catch(e){
+      try{ await signInWithPopup(auth, provider); }
+      catch(e){
         console.warn('Popup sign-in error:', e.code, e.message);
         if (e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-closed-by-user') {
           try { await signInWithRedirect(auth, provider); }
           catch(err){ alert('Inloggen via redirect mislukt: ' + err.message); }
-        } else {
-          alert('Inloggen mislukt: ' + e.message);
-        }
+        } else { alert('Inloggen mislukt: ' + e.message); }
       }
     };
     signOutBtn.onclick=()=>signOut(auth);
@@ -233,7 +240,6 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       // ---- Rol bepalen ----
       isAdmin = (user.uid===ADMIN_UID) || (ADMIN_EMAIL && user.email===ADMIN_EMAIL);
       currentRole = null;
-      // allowedUsers/<uid>
       try{
         const allowSnap = await getDoc(doc(db,'allowedUsers', user.uid));
         if(allowSnap.exists()){
@@ -241,7 +247,6 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
           if(currentRole === 'admin') isAdmin = true;
         }
       }catch{}
-      // adminEmails/<email>
       if(!isAdmin && user.email){
         try{
           const aSnap = await getDoc(doc(db,'adminEmails', user.email));
@@ -262,6 +267,7 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       await loadAccessibleAccounts();
     });
 
+    // ===== Profiel opslaan met unieke naam =====
     saveProfile.onclick = async ()=>{
       const f = firstName.value.trim(); const l = lastName.value.trim();
       if(!f||!l){return alert('Vul zowel voornaam als achternaam in.');}
@@ -294,7 +300,7 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       }catch(e){ alert(e.message || 'Kon profiel niet opslaan.'); }
     };
 
-    // Bouw labels op basis van profiles/<uid>
+    // ===== Labels op basis van profiles =====
     async function labelForAccount(uid){
       if(uid===currentUser.uid){
         const me = await loadProfile(uid);
@@ -303,10 +309,10 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       }
       const p = await loadProfile(uid);
       if(p && p.firstName && p.lastName){ return `${p.firstName} ${p.lastName}`; }
-      // fallback: toon uid
-      return uid;
+      return uid; // fallback
     }
 
+    // ===== Accounts laden (filter: niet-verwijderd) =====
     async function loadAccessibleAccounts(){
       accountSelect.innerHTML='';
       const uid=currentUser.uid; const email=currentUser.email;
@@ -340,7 +346,6 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       if(ids.length>0){ selectAccount(ids.includes(uid)?uid:ids[0]); }
     }
 
-
     refreshBtn.onclick=()=>loadAccessibleAccounts();
     accountSelect.onchange=()=>selectAccount(accountSelect.value);
 
@@ -370,7 +375,7 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       editorControls.classList.toggle('hidden', !canEdit);
     }
 
-    // Transacties
+    // ===== Transacties =====
     el('add').onclick=async()=>{
       if(!selectedAccountId)return; const cents=parseEuro(amountInput.value); if(cents===null)return setStatus('Voer geldig bedrag in');
       await runTransaction(db, async (tx)=>{
@@ -385,7 +390,7 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       await setDoc(doc(db,'totals',selectedAccountId),{cents:0},{merge:true}); setStatus('Totaal gereset.');
     };
 
-    // Admin beheer
+    // ===== Admin beheer =====
     createAccBtn.onclick=async()=>{
       const acc=adminAccountUid.value.trim(); if(!acc) return alert('Vul rekening-ID (UID) in');
       await ensureAccountDoc(acc); await loadRights(acc); alert('Rekening aangemaakt/geïnitialiseerd');
