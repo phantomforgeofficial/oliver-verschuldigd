@@ -1,175 +1,229 @@
 <!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Login om totaal bedrag te zien</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Totaal Bedrag - Rekeningen</title>
   <style>
-    :root{--bg:#0b0f19;--card:#121826;--ink:#e7ecf3;--muted:#9aa8b4;--accent:#5b9dff;--good:#18b26b;--warn:#f5a524;--err:#f04438}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Inter,Arial;background:linear-gradient(180deg,#0b0f19,#0e1424 30%,#0b0f19);color:var(--ink);min-height:100svh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative}
-    .card{width:100%;max-width:560px;background:var(--card);border:1px solid rgba(255,255,255,.06);border-radius:20px;box-shadow:0 20px 50px rgba(0,0,0,.35);padding:22px}
-    h1{font-size:22px;margin:0 0 8px} p{color:var(--muted);margin:0 0 18px}
-    .total{display:flex;align-items:baseline;gap:10px;margin:10px 0 14px}
-    .total .amount{font-weight:700;font-size:40px}
-    .chip{font-size:12px;padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:999px;color:var(--muted)}
-    .row{display:flex;gap:10px}
-    input[type="number"], input[type="text"]{flex:1;background:#0b1020;border:1px solid rgba(255,255,255,.1);border-radius:12px;color:var(--ink);padding:14px 14px;font-size:16px;outline:none}
-    input:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(91,157,255,.15)}
-    button{appearance:none;border:0;border-radius:12px;padding:14px 16px;font-weight:700;font-size:16px;cursor:pointer}
-    .primary{background:var(--accent);color:#06122b}
-    .ghost{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--ink)}
-    .danger{background:transparent;border:1px solid var(--err);color:var(--err)}
-    .stack{display:flex;flex-direction:column;gap:10px}
-    .divider{height:1px;background:rgba(255,255,255,.06);margin:14px 0}
-    .status{min-height:22px;color:var(--muted);font-size:14px}
-    .hidden{display:none !important}
-    .admin-only{border:1px dashed rgba(255,255,255,.15);padding:12px;border-radius:12px}
-    #userInfo{position:absolute;top:16px;right:20px;display:flex;gap:10px;align-items:center}
+    :root {
+      --bg:#0b0f19;--card:#121826;--ink:#e7ecf3;--muted:#9aa8b4;--accent:#5b9dff;--err:#f04438;
+    }
+    body {
+      margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Inter,Arial;
+      background:linear-gradient(180deg,#0b0f19,#0e1424 30%,#0b0f19);
+      color:var(--ink);min-height:100vh;padding:20px;
+    }
+    .card {background:var(--card);border-radius:16px;padding:20px;max-width:600px;margin:40px auto;box-shadow:0 8px 25px rgba(0,0,0,.3);}
+    .hidden{display:none!important;}
+    h1{margin-top:0;}
+    input,select,button{border-radius:8px;padding:10px;font-size:16px;margin:4px 0;}
+    input,select{width:100%;border:1px solid #444;background:#0b1020;color:var(--ink);}
+    button{cursor:pointer;}
+    .primary{background:var(--accent);color:#000;border:0;}
+    .ghost{background:transparent;border:1px solid #444;color:var(--ink);}
+    .danger{background:transparent;border:1px solid var(--err);color:var(--err);}
+    #userInfo{position:absolute;top:10px;right:15px;}
+    .list-row{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #222;padding:6px 0;}
   </style>
 </head>
 <body>
   <div id="userInfo" class="hidden">
-    <div class="chip" id="who"></div>
+    <span id="who"></span>
     <button id="signOut" class="ghost">Uitloggen</button>
   </div>
 
   <div class="card">
-    <h1 id="pageTitle">Login om totaal bedrag te zien</h1>
-    <p id="adminText" class="hidden">Vul een bedrag in. Alleen jij kunt het totaal wijzigen; iedereen kan het totaal bekijken.</p>
+    <h1 id="title">Login om rekeningen te zien</h1>
 
-    <div class="total hidden" id="totalSection">
-      <div class="chip">Huidig totaal</div>
-      <div class="amount" id="totalAmount">—</div>
+    <div id="loginSection">
+      <button id="signIn" class="primary">Inloggen met Google</button>
     </div>
 
-    <div id="loginSection" class="row">
-      <button id="signIn" class="ghost">Inloggen met Google</button>
+    <div id="noAccess" class="hidden">
+      <p>Je hebt (nog) geen rekening. Neem contact op met de beheerder.</p>
     </div>
 
-    <div class="divider"></div>
-
-    <div id="adminPanel" class="stack admin-only hidden">
-      <label for="amountInput">Bedrag toevoegen (bijv. 12,34)</label>
-      <div class="row">
-        <input id="amountInput" type="text" inputmode="decimal" placeholder="0,00" />
-        <button id="addBtn" class="primary">Toevoegen</button>
-      </div>
-      <div class="row">
-        <button id="resetBtn" class="danger">Totaal resetten naar 0</button>
+    <div id="balanceSection" class="hidden">
+      <h2>Jouw totaal</h2>
+      <p id="balance">€0,00</p>
+      <div id="editorControls" class="hidden">
+        <input id="amount" type="text" placeholder="Bedrag (bijv. 12,34)">
+        <button id="add" class="primary">Toevoegen</button>
+        <button id="reset" class="danger">Resetten</button>
       </div>
     </div>
 
-    <div class="status" id="status"></div>
+    <div id="adminPanel" class="hidden">
+      <h2>Beheer gebruikers</h2>
+      <div>
+        <input id="newEmail" type="text" placeholder="E-mail of UID">
+        <select id="newRole">
+          <option value="viewer">Viewer</option>
+          <option value="editor">Editor</option>
+        </select>
+        <button id="addUser" class="primary">Toevoegen</button>
+      </div>
+      <div id="userList"></div>
+    </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
     import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
-    import { getFirestore, doc, onSnapshot, runTransaction, setDoc } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
+    import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
 
+    // 🔥 Jouw Firebase-config
     const firebaseConfig = {
-      apiKey: "AIzaSyBAu9cAg4BDojNfNSo-8zW3_XcEe1z89Lw",
-      authDomain: "mijn-totaal.firebaseapp.com",
-      projectId: "mijn-totaal",
-      storageBucket: "mijn-totaal.firebasestorage.app",
-      messagingSenderId: "222510110794",
-      appId: "1:222510110794:web:10e3aca61a30f9a6006eb3",
-      measurementId: "G-6Y25W4YXDF"
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT",
+      appId: "YOUR_APP_ID"
     };
-
-    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2";
+    const ADMIN_UID = "YOUR_ADMIN_UID";
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    const el = (id)=>document.getElementById(id);
-    const fmt = new Intl.NumberFormat('nl-NL', { style:'currency', currency:'EUR' });
+    const el = id => document.getElementById(id);
 
-    const totalRef = doc(db, 'totals', 'main');
+    // UI elementen
+    const signInBtn = el("signIn");
+    const signOutBtn = el("signOut");
+    const who = el("who");
+    const userInfo = el("userInfo");
+    const loginSection = el("loginSection");
+    const balanceSection = el("balanceSection");
+    const adminPanel = el("adminPanel");
+    const editorControls = el("editorControls");
+    const noAccess = el("noAccess");
+    const balance = el("balance");
+    const userList = el("userList");
 
-    onSnapshot(totalRef, snap => {
-      const data = snap.data();
-      const cents = data?.cents ?? 0;
-      el('totalAmount').textContent = fmt.format(cents/100);
+    let currentUser = null;
+    let currentRole = null;
+
+    // 🔹 Login/out
+    signInBtn.onclick = async () => {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    };
+    signOutBtn.onclick = () => signOut(auth);
+
+    // 🔹 Na inloggen
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        loginSection.classList.remove("hidden");
+        userInfo.classList.add("hidden");
+        adminPanel.classList.add("hidden");
+        balanceSection.classList.add("hidden");
+        noAccess.classList.add("hidden");
+        return;
+      }
+      currentUser = user;
+      who.textContent = user.email;
+      userInfo.classList.remove("hidden");
+      loginSection.classList.add("hidden");
+
+      if (user.uid === ADMIN_UID) {
+        showAdminPanel();
+      }
+
+      // Check of gebruiker bestaat in allowedUsers
+      const allowedRef = doc(db, "allowedUsers", user.uid);
+      const allowedSnap = await getDoc(allowedRef);
+      if (!allowedSnap.exists() && user.uid !== ADMIN_UID) {
+        noAccess.classList.remove("hidden");
+        balanceSection.classList.add("hidden");
+        return;
+      }
+      currentRole = user.uid === ADMIN_UID ? "admin" : allowedSnap.data().role;
+      noAccess.classList.add("hidden");
+      balanceSection.classList.remove("hidden");
+      loadUserBalance(user.uid);
     });
 
-    function setStatus(msg){ el('status').textContent = msg || ''; }
-
-    function parseEuro(input){
-      const s = String(input).trim().replace(/\s+/g,'');
-      if(!s) return null;
-      const norm = s.replace(/\./g,'').replace(',', '.');
-      const val = Number(norm);
-      if(!isFinite(val)) return null;
-      return Math.round(val * 100);
+    async function loadUserBalance(uid) {
+      const ref = doc(db, "totals", uid);
+      onSnapshot(ref, snap => {
+        const val = snap.exists() ? (snap.data().cents || 0) : 0;
+        balance.textContent = (val/100).toLocaleString("nl-NL",{style:"currency",currency:"EUR"});
+      });
+      if (currentRole === "editor" || currentRole === "admin") {
+        editorControls.classList.remove("hidden");
+      } else {
+        editorControls.classList.add("hidden");
+      }
     }
 
-    const signInBtn = el('signIn');
-    const signOutBtn = el('signOut');
-    const who = el('who');
-    const adminPanel = el('adminPanel');
-    const adminText = el('adminText');
-    const totalSection = el('totalSection');
-    const pageTitle = el('pageTitle');
-    const userInfo = el('userInfo');
-    const loginSection = el('loginSection');
+    el("add").onclick = async () => {
+      const amount = parseFloat(el("amount").value.replace(",", "."));
+      if (isNaN(amount)) return alert("Ongeldig bedrag");
+      const cents = Math.round(amount * 100);
+      const ref = doc(db, "totals", currentUser.uid);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const current = snap.exists() ? snap.data().cents || 0 : 0;
+        tx.set(ref, { cents: current + cents });
+      });
+      el("amount").value = "";
+    };
 
-    signInBtn.addEventListener('click', async ()=>{
-      try{
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
-      }catch(e){ setStatus('Inloggen mislukt: ' + e.message); }
-    });
+    el("reset").onclick = async () => {
+      const ref = doc(db, "totals", currentUser.uid);
+      await setDoc(ref, { cents: 0 });
+    };
 
-    signOutBtn.addEventListener('click', ()=> signOut(auth));
+    // 🔹 Admin functies
+    async function showAdminPanel() {
+      adminPanel.classList.remove("hidden");
+      loadUsers();
 
-    onAuthStateChanged(auth, async (user)=>{
-      if(user){
-        who.textContent = user.email || user.uid;
-        loginSection.classList.add('hidden');
-        userInfo.classList.remove('hidden');
-        totalSection.classList.remove('hidden');
-        pageTitle.textContent = 'Totaal Bedrag';
-        if(user.uid === ADMIN_UID){
-          adminPanel.classList.remove('hidden');
-          adminText.classList.remove('hidden');
-        } else {
-          adminPanel.classList.add('hidden');
-          adminText.classList.add('hidden');
-        }
-      } else {
-        userInfo.classList.add('hidden');
-        loginSection.classList.remove('hidden');
-        adminPanel.classList.add('hidden');
-        adminText.classList.add('hidden');
-        totalSection.classList.add('hidden');
-        pageTitle.textContent = 'Login om totaal bedrag te zien';
-      }
-    });
+      el("addUser").onclick = async () => {
+        const email = el("newEmail").value.trim();
+        const role = el("newRole").value;
+        if (!email) return alert("Voer e-mail of UID in");
+        const newUid = email; // gebruik UID of e-mail als ID
+        await setDoc(doc(db, "allowedUsers", newUid), { email, role });
+        el("newEmail").value = "";
+        loadUsers();
+      };
+    }
 
-    el('addBtn').addEventListener('click', async ()=>{
-      setStatus('');
-      const centsToAdd = parseEuro(el('amountInput').value);
-      if(centsToAdd === null){ setStatus('Voer een geldig bedrag in, bijv. 12,34'); return; }
-      try{
-        await runTransaction(db, async (tx)=>{
-          const snap = await tx.get(totalRef);
-          const current = snap.exists() ? (snap.data().cents||0) : 0;
-          tx.set(totalRef, { cents: current + centsToAdd }, { merge:true });
-        });
-        el('amountInput').value='';
-        setStatus('Toegevoegd.');
-      }catch(e){ setStatus('Kon niet toevoegen: ' + e.message); }
-    });
+    async function loadUsers() {
+      userList.innerHTML = "";
+      const querySnap = await getDocs(collection(db, "allowedUsers"));
+      querySnap.forEach(docu => {
+        const data = docu.data();
+        const row = document.createElement("div");
+        row.className = "list-row";
+        row.innerHTML = `
+          <div>${data.email} (${data.role})</div>
+          <div>
+            <button data-uid="${docu.id}" data-role="${data.role}" class="ghost toggleRole">Wijzig rol</button>
+            <button data-uid="${docu.id}" class="danger deleteUser">Verwijder</button>
+          </div>
+        `;
+        userList.appendChild(row);
+      });
 
-    el('resetBtn').addEventListener('click', async ()=>{
-      try{
-        await setDoc(totalRef, { cents: 0 }, { merge:true });
-        setStatus('Totaal gereset.');
-      }catch(e){ setStatus('Kon niet resetten: ' + e.message); }
-    });
+      // Eventlisteners
+      document.querySelectorAll(".toggleRole").forEach(btn=>{
+        btn.onclick = async ()=>{
+          const uid = btn.dataset.uid;
+          const current = btn.dataset.role;
+          const newRole = current==="viewer"?"editor":"viewer";
+          await updateDoc(doc(db,"allowedUsers",uid),{role:newRole});
+          loadUsers();
+        };
+      });
+      document.querySelectorAll(".deleteUser").forEach(btn=>{
+        btn.onclick = async ()=>{
+          await deleteDoc(doc(db,"allowedUsers",btn.dataset.uid));
+          loadUsers();
+        };
+      });
+    }
   </script>
 </body>
 </html>
