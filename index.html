@@ -123,7 +123,8 @@
       appId: "1:222510110794:web:10e3aca61a30f9a6006eb3",
       measurementId: "G-6Y25W4YXDF"
     };
-    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2";
+    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2"; // vaste fallback
+const ADMIN_EMAIL = null; // optioneel: zet hier je admin e-mail, bv. "jij@voorbeeld.nl"
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -147,6 +148,7 @@
     const rightsAccount=el('rightsAccount'), rightsList=el('rightsList');
 
     let currentUser=null, selectedAccountId=null, unsubscribeTotal=null;
+let isAdmin=false; let currentRole=null; // debug/rolstatus
     const provider=new GoogleAuthProvider();
 
     function setStatus(s=''){statusEl.textContent=s;}
@@ -199,22 +201,39 @@
         userInfo.classList.add('hidden'); loginSection.classList.remove('hidden');
         accountPicker.classList.add('hidden'); totalSection.classList.add('hidden'); editorControls.classList.add('hidden');
         profileSection.classList.add('hidden'); noAccess.classList.add('hidden');
-        if(unsubscribeTotal){unsubscribeTotal(); unsubscribeTotal=null;}
+        if(unsubscribeTotal){unsubscribeTotal();unsubscribeTotal=null;}
+        isAdmin=false; currentRole=null; who.textContent='';
         return;
       }
-      currentUser=user; who.textContent=user.email||user.uid; userInfo.classList.remove('hidden'); loginSection.classList.add('hidden');
+      currentUser=user; who.textContent=(user.email||user.uid);
+      userInfo.classList.remove('hidden'); loginSection.classList.add('hidden');
 
-      // Profiel controleren/aanmaken en evt. vragen om naam in te vullen
+      // Profiel voorbereiden
       await ensureProfile(user.uid, user.email);
       const prof = await loadProfile(user.uid);
-      if(!prof || !prof.firstName || !prof.lastName){
-        profileSection.classList.remove('hidden');
-      } else {
-        profileSection.classList.add('hidden');
+      profileSection.classList.toggle('hidden', !!(prof && prof.firstName && prof.lastName));
+
+      // ---- Rol bepalen ----
+      isAdmin = (user.uid===ADMIN_UID) || (ADMIN_EMAIL && user.email===ADMIN_EMAIL);
+      currentRole = null;
+      // allowedUsers/<uid>
+      try{
+        const allowSnap = await getDoc(doc(db,'allowedUsers', user.uid));
+        if(allowSnap.exists()){
+          currentRole = allowSnap.data().role || null;
+          if(currentRole === 'admin') isAdmin = true;
+        }
+      }catch{}
+      // adminEmails/<email>
+      if(!isAdmin && user.email){
+        try{
+          const aSnap = await getDoc(doc(db,'adminEmails', user.email));
+          if(aSnap.exists()) isAdmin = true;
+        }catch{}
       }
 
-      const isAdmin=(user.uid===ADMIN_UID);
-      adminPanel.classList.toggle('hidden',!isAdmin);
+      adminPanel.classList.toggle('hidden', !isAdmin);
+      adminText.classList.toggle('hidden', !isAdmin);
 
       await loadAccessibleAccounts();
     });
@@ -246,11 +265,12 @@
       const uid=currentUser.uid; const email=currentUser.email;
       await ensureAccountDoc(uid);
 
-      // Verzamel bereikbare accounts, filter op deleted == false
       const options = new Set();
-      // Eigen
-      options.add(uid);
-      // viewer/editor via UID/e-mail
+      // eigen rekening alleen tonen als niet verwijderd
+      const ownRef = doc(db,'totals',uid); const ownSnap = await getDoc(ownRef);
+      if(ownSnap.exists() && ownSnap.data().deleted!==true){ options.add(uid); }
+
+      // viewer/editor via UID/e-mail (alleen niet-verwijderde)
       const qList = [
         query(collection(db,'totals'), where('deleted','==',false), where('viewers','array-contains',uid)),
         query(collection(db,'totals'), where('deleted','==',false), where('viewerEmails','array-contains',email)),
@@ -258,6 +278,20 @@
         query(collection(db,'totals'), where('deleted','==',false), where('editorEmails','array-contains',email)),
       ];
       for(const qy of qList){ (await getDocs(qy)).forEach(d=> options.add(d.id)); }
+
+      if(isAdmin){
+        const all = await getDocs(query(collection(db,'totals'), where('deleted','==',false)));
+        all.forEach(d=> options.add(d.id));
+      }
+
+      // labels
+      const ids = Array.from(options);
+      for(const id of ids){
+        const o=document.createElement('option'); o.value=id; o.textContent=await labelForAccount(id); accountSelect.appendChild(o);
+      }
+      accountPicker.classList.remove('hidden');
+      if(ids.length>0){ selectAccount(ids.includes(uid)?uid:ids[0]); }
+    }
       // Admin: alle niet-verwijderde
       if(uid===ADMIN_UID){
         const all = await getDocs(query(collection(db,'totals'), where('deleted','==',false)));
@@ -292,7 +326,7 @@
       totalSection.classList.remove('hidden');
 
       // Edit rechten
-      let canEdit = (currentUser.uid===ADMIN_UID) || (currentUser.uid===accountId);
+      let canEdit = isAdmin || (currentUser.uid===accountId);
       try{
         const s = await getDoc(ref); const d=s.data();
         if(d){
