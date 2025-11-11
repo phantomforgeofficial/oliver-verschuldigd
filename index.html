@@ -111,7 +111,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, signInWithRedirect, getRedirectResult } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, runTransaction, arrayUnion, arrayRemove, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -150,6 +150,8 @@ const ADMIN_EMAIL = null; // optioneel: zet hier je admin e-mail, bv. "jij@voorb
     let currentUser=null, selectedAccountId=null, unsubscribeTotal=null;
 let isAdmin=false; let currentRole=null; // debug/rolstatus
     const provider=new GoogleAuthProvider();
+    // Toon accountkeuze steeds, helpt bij meerdere Google-accounts
+    try{ provider.setCustomParameters({ prompt: 'select_account' }); }catch(_){}
 
     function setStatus(s=''){statusEl.textContent=s;}
 
@@ -193,8 +195,23 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       return ref;
     }
 
-    signInBtn.onclick=async()=>{try{await signInWithPopup(auth,provider);}catch(e){alert('Inloggen mislukt: '+e.message);}};
+    signInBtn.onclick=async()=>{
+      try{
+        await signInWithPopup(auth, provider);
+      }catch(e){
+        console.warn('Popup sign-in error:', e.code, e.message);
+        if (e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-closed-by-user') {
+          try { await signInWithRedirect(auth, provider); }
+          catch(err){ alert('Inloggen via redirect mislukt: ' + err.message); }
+        } else {
+          alert('Inloggen mislukt: ' + e.message);
+        }
+      }
+    };
     signOutBtn.onclick=()=>signOut(auth);
+
+    // Verwerk redirect-terugkomst (voor iOS/Safari of geblokkeerde popups)
+    try { await getRedirectResult(auth); } catch(e) { console.warn('getRedirectResult error', e); }
 
     onAuthStateChanged(auth,async(user)=>{
       if(!user){
@@ -292,21 +309,7 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
       accountPicker.classList.remove('hidden');
       if(ids.length>0){ selectAccount(ids.includes(uid)?uid:ids[0]); }
     }
-      // Admin: alle niet-verwijderde
-      if(uid===ADMIN_UID){
-        const all = await getDocs(query(collection(db,'totals'), where('deleted','==',false)));
-        all.forEach(d=> options.add(d.id));
-      }
 
-      // Labels ophalen en vullen
-      const ids = Array.from(options);
-      for(const id of ids){
-        const o=document.createElement('option'); o.value=id; o.textContent=await labelForAccount(id); accountSelect.appendChild(o);
-      }
-      document.getElementById('accountPicker').classList.remove('hidden');
-      // standaard eigen selecteren
-      selectAccount(uid);
-    }
 
     refreshBtn.onclick=()=>loadAccessibleAccounts();
     accountSelect.onchange=()=>selectAccount(accountSelect.value);
