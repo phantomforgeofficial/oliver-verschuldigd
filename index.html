@@ -249,8 +249,15 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
         }catch{}
       }
 
-      adminPanel.classList.toggle('hidden', !isAdmin);
-      adminText.classList.toggle('hidden', !isAdmin);
+      if (isAdmin) {
+        adminPanel.classList.remove('hidden');
+        adminText.classList.remove('hidden');
+        // Zorg dat deze admin altijd een (actieve) rekening heeft
+        await setDoc(doc(db, 'totals', user.uid), { cents: 0, deleted: false }, { merge: true });
+      } else {
+        adminPanel.classList.add('hidden');
+        adminText.classList.add('hidden');
+      }
 
       await loadAccessibleAccounts();
     });
@@ -258,10 +265,33 @@ let isAdmin=false; let currentRole=null; // debug/rolstatus
     saveProfile.onclick = async ()=>{
       const f = firstName.value.trim(); const l = lastName.value.trim();
       if(!f||!l){return alert('Vul zowel voornaam als achternaam in.');}
-      await setDoc(doc(db,'profiles',currentUser.uid),{firstName:f,lastName:l,email:currentUser.email||''},{merge:true});
-      profileSection.classList.add('hidden');
-      // labels opnieuw opbouwen met namen
-      await loadAccessibleAccounts();
+      const newKey = makeFullKey(f,l);
+      const uid = currentUser.uid; const email = currentUser.email||'';
+
+      const oldProf = await loadProfile(uid);
+      const oldKey = (oldProf && oldProf.fullKey) ? oldProf.fullKey : '';
+
+      try{
+        await runTransaction(db, async (tx)=>{
+          // 1) vrijgeven oude naam-index (indien veranderd en eigendom van mij)
+          if(oldKey && oldKey !== newKey){
+            const oldRef = doc(db,'nameIndex', oldKey);
+            const oldSnap = await tx.get(oldRef);
+            if(oldSnap.exists() && oldSnap.data().uid === uid){ tx.delete(oldRef); }
+          }
+          // 2) claim nieuwe naam-index (unique)
+          const ref = doc(db,'nameIndex', newKey);
+          const snap = await tx.get(ref);
+          if(snap.exists() && snap.data().uid !== uid){
+            throw new Error('Deze naam is al in gebruik bij een ander account. Kies een variant.');
+          }
+          tx.set(ref, { uid: uid, email: email, fullName: (f + ' ' + l), fullKey: newKey });
+          // 3) profiel opslaan met fullKey
+          tx.set(doc(db,'profiles', uid), { firstName: f, lastName: l, email: email, fullKey: newKey }, { merge: true });
+        });
+        profileSection.classList.add('hidden');
+        await loadAccessibleAccounts();
+      }catch(e){ alert(e.message || 'Kon profiel niet opslaan.'); }
     };
 
     // Bouw labels op basis van profiles/<uid>
