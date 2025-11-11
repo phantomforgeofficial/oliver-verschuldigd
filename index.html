@@ -40,14 +40,14 @@
     <h1 id="pageTitle">Login om totaal bedrag te zien</h1>
     <p id="adminText" class="hidden">Alleen jij kunt rekeningen beheren; anderen zien wat jij toewijst.</p>
 
-    <!-- Profiel naam invullen -->
+    <!-- Profiel naam invullen (eenmalig na login) -->
     <div id="profileSection" class="stack hidden">
       <div class="row">
         <input id="firstName" type="text" placeholder="Voornaam" />
         <input id="lastName" type="text" placeholder="Achternaam" />
         <button id="saveProfile" class="primary">Naam opslaan</button>
       </div>
-      <p class="muted">Elke naam kan maar aan één e-mail gekoppeld zijn.</p>
+      <p class="muted">Vul je voor- en achternaam in. Je rekening wordt in lijsten getoond als "Voornaam Achternaam". Een naam kan maar aan één e‑mail gekoppeld zijn.</p>
     </div>
 
     <!-- Rekening-kiezer -->
@@ -81,21 +81,28 @@
 
     <div class="divider"></div>
 
-    <!-- Adminpanel -->
+    <!-- Admin: rekeningen & rechten -->
     <div id="adminPanel" class="hidden">
-      <h2>Beheer rekeningen & rechten</h2>
+      <h2>Beheer rekeningen & rechten (UID of e-mail)</h2>
       <div class="stack">
         <div class="row">
-          <input id="adminAccountUid" type="text" placeholder="UID" />
+          <input id="adminAccountUid" type="text" placeholder="Rekening-ID (UID eigenaar)" />
           <button id="createAccountDoc" class="ghost">Maak rekening</button>
-          <button id="deleteAccountDoc" class="danger">Verwijder</button>
+          <button id="deleteAccountDoc" class="danger">Verwijder (markeer als verwijderd)</button>
         </div>
         <div class="row">
-          <input id="viewerUid" type="text" placeholder="Viewer UID/e-mail" />
+          <input id="viewerUid" type="text" placeholder="Viewer UID of e-mail" />
           <button id="addViewer" class="ghost">Viewer toevoegen</button>
-          <input id="editorUid" type="text" placeholder="Editor UID/e-mail" />
+          <input id="editorUid" type="text" placeholder="Editor UID of e-mail" />
           <button id="addEditor" class="ghost">Editor toevoegen</button>
         </div>
+        <div class="row">
+          <input id="removeUid" type="text" placeholder="UID/e-mail verwijderen" />
+          <button id="removeAccess" class="danger">Toegang verwijderen</button>
+        </div>
+        <div class="divider"></div>
+        <h3>Rechten voor rekening: <code id="rightsAccount">—</code></h3>
+        <div id="rightsList"></div>
       </div>
     </div>
 
@@ -103,8 +110,7 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, signInWithRedirect, getRedirectResult } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, runTransaction, arrayUnion, arrayRemove, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -116,60 +122,325 @@
       appId: "1:222510110794:web:10e3aca61a30f9a6006eb3",
       measurementId: "G-6Y25W4YXDF"
     };
-    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2";
+    const ADMIN_UID = "BwGO9djUQkUBE3FvUcQlJd5zy6g2"; // vaste admin UID
+    const ADMIN_EMAIL = null; // optioneel admin e-mail
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    const el = id => document.getElementById(id);
+    const el = id=>document.getElementById(id);
     const fmt = new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR'});
 
-    const signInBtn=el('signIn'), signOutBtn=el('signOut'), who=el('who');
-    const loginSection=el('loginSection'), profileSection=el('profileSection');
-    const firstName=el('firstName'), lastName=el('lastName'), saveProfile=el('saveProfile');
-    const totalAmount=el('totalAmount'), amountInput=el('amount');
-    const adminPanel=el('adminPanel'), adminText=el('adminText');
-    const accountSelect=el('accountSelect');
+    const signInBtn=el('signIn'), signOutBtn=el('signOut'), who=el('who'), userInfo=el('userInfo');
+    const loginSection=el('loginSection'), adminText=el('adminText');
+    const profileSection=el('profileSection'), firstName=el('firstName'), lastName=el('lastName'), saveProfile=el('saveProfile');
+    const accountPicker=el('accountPicker'), accountSelect=el('accountSelect'), refreshBtn=el('refreshAccounts');
+    const totalSection=el('totalSection'), totalAmount=el('totalAmount');
+    const editorControls=el('editorControls'), amountInput=el('amount');
+    const noAccess=el('noAccess'), statusEl=el('status');
+    const adminPanel=el('adminPanel'), adminAccountUid=el('adminAccountUid');
+    const createAccBtn=el('createAccountDoc'), deleteAccBtn=el('deleteAccountDoc');
+    const viewerUid=el('viewerUid'), addViewerBtn=el('addViewer');
+    const editorUid=el('editorUid'), addEditorBtn=el('addEditor');
+    const removeUid=el('removeUid'), removeAccessBtn=el('removeAccess');
+    const rightsAccount=el('rightsAccount'), rightsList=el('rightsList');
 
     let currentUser=null, selectedAccountId=null, unsubscribeTotal=null;
+    let isAdmin=false; let currentRole=null;
     const provider=new GoogleAuthProvider();
     try { provider.setCustomParameters({ prompt: 'select_account' }); } catch(_) {}
 
-    function parseEuro(s){return Math.round(Number(String(s).replace(',','.'))*100)||0;}
-    function normalizeName(s){return String(s||'').normalize('NFD').replace(/\\p{Diacritic}+/gu,'').toLowerCase().trim().replace(/\\s+/g,' ');}
-    function makeFullKey(f,l){return normalizeName(f)+' '+normalizeName(l);}
+    function setStatus(s=''){statusEl.textContent=s;}
 
-    signInBtn.onclick=()=>signInWithPopup(auth,provider);
+    function parseEuro(input){
+      const s=String(input).trim().replace(/\s+/g,'');
+      if(!s)return null;
+      const norm=s.replace(/\./g,'').replace(',','.');
+      const val=Number(norm);
+      return isFinite(val)?Math.round(val*100):null;
+    }
+
+    // ===== Naam-uniciteit helpers =====
+    function normalizeName(s){
+      return String(s||'')
+        .normalize('NFD').replace(/\p{Diacritic}+/gu,'')
+        .toLowerCase().trim().replace(/\s+/g,' ');
+    }
+    function makeFullKey(first,last){
+      return normalizeName(first) + ' ' + normalizeName(last);
+    }
+
+    // Profiel opslag: profiles/<uid> { firstName, lastName, email, fullKey }
+    async function ensureProfile(uid, email){
+      const pRef = doc(db,'profiles',uid);
+      const s = await getDoc(pRef);
+      if(!s.exists()){
+        await setDoc(pRef,{ firstName:'', lastName:'', email: email||'', fullKey:'' });
+      }
+      return pRef;
+    }
+    async function loadProfile(uid){
+      const p=await getDoc(doc(db,'profiles',uid));
+      return p.exists()? p.data() : null;
+    }
+
+    // Rekening doc: totals/<uid> met deleted-flag en rechtenvelden
+    async function ensureAccountDoc(uid){
+      const ref=doc(db,'totals',uid);
+      const s=await getDoc(ref);
+      if(!s.exists()){
+        await setDoc(ref,{cents:0,deleted:false,viewers:[],editors:[],viewerEmails:[],editorEmails:[]},{merge:true});
+      } else {
+        const d=s.data();
+        if(d.deleted===undefined){ await setDoc(ref,{deleted:false},{merge:true}); }
+        if(!Array.isArray(d.viewers)||!Array.isArray(d.editors)||!Array.isArray(d.viewerEmails)||!Array.isArray(d.editorEmails)){
+          await setDoc(ref,{
+            viewers:d.viewers||[],editors:d.editors||[],viewerEmails:d.viewerEmails||[],editorEmails:d.editorEmails||[]
+          },{merge:true});
+        }
+      }
+      return ref;
+    }
+
+    // ===== Auth =====
+    signInBtn.onclick = async () => {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (e) {
+        console.warn('Popup sign-in error:', e.code, e.message);
+        if (e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-closed-by-user') {
+          try { await signInWithRedirect(auth, provider); }
+          catch (err) { alert('Inloggen via redirect mislukt: ' + err.message); }
+        } else {
+          alert('Inloggen mislukt: ' + e.message);
+        }
+      }
+    };
     signOutBtn.onclick=()=>signOut(auth);
 
-    async function ensureAccount(uid){await setDoc(doc(db,'totals',uid),{cents:0,deleted:false},{merge:true});}
+    // Verwerk redirect-terugkomst (voor iOS/Safari of geblokkeerde popups)
+    try { await getRedirectResult(auth); } catch(e) { console.warn('getRedirectResult error', e); }
+    // Verwerk redirect-terugkomst (bij iOS/Safari of popup-blokkade)
+    try { await getRedirectResult(auth); } catch(e) { console.warn('getRedirectResult error', e); }
 
     onAuthStateChanged(auth,async(user)=>{
-      if(!user){loginSection.classList.remove('hidden');adminPanel.classList.add('hidden');return;}
-      loginSection.classList.add('hidden');
-      currentUser=user;
-      await ensureAccount(user.uid);
-      if(user.uid===ADMIN_UID){adminPanel.classList.remove('hidden');adminText.classList.remove('hidden');}
-      else adminPanel.classList.add('hidden');
+      if(!user){
+        userInfo.classList.add('hidden'); loginSection.classList.remove('hidden');
+        accountPicker.classList.add('hidden'); totalSection.classList.add('hidden'); editorControls.classList.add('hidden');
+        profileSection.classList.add('hidden'); noAccess.classList.add('hidden');
+        if(unsubscribeTotal){unsubscribeTotal();unsubscribeTotal=null;}
+        isAdmin=false; currentRole=null; who.textContent='';
+        return;
+      }
+      currentUser=user; who.textContent=(user.email||user.uid);
+      userInfo.classList.remove('hidden'); loginSection.classList.add('hidden');
+
+      // Profiel voorbereiden
+      await ensureProfile(user.uid, user.email);
+      const prof = await loadProfile(user.uid);
+      profileSection.classList.toggle('hidden', !!(prof && prof.firstName && prof.lastName));
+
+      // ---- Rol bepalen ----
+      isAdmin = (user.uid===ADMIN_UID) || (ADMIN_EMAIL && user.email===ADMIN_EMAIL);
+      currentRole = null;
+      try{
+        const allowSnap = await getDoc(doc(db,'allowedUsers', user.uid));
+        if(allowSnap.exists()){
+          currentRole = allowSnap.data().role || null;
+          if(currentRole === 'admin') isAdmin = true;
+        }
+      }catch{}
+      if(!isAdmin && user.email){
+        try{
+          const aSnap = await getDoc(doc(db,'adminEmails', user.email));
+          if(aSnap.exists()) isAdmin = true;
+        }catch{}
+      }
+
+      if (isAdmin) {
+        adminPanel.classList.remove('hidden');
+        adminText.classList.remove('hidden');
+        // Zorg dat deze admin altijd een (actieve) rekening heeft
+        await setDoc(doc(db, 'totals', user.uid), { cents: 0, deleted: false }, { merge: true });
+      } else {
+        adminPanel.classList.add('hidden');
+        adminText.classList.add('hidden');
+      }
+
+      await loadAccessibleAccounts();
     });
 
-    saveProfile.onclick=async()=>{
-      const f=firstName.value.trim(), l=lastName.value.trim();
-      if(!f||!l) return alert('Vul naam in.');
-      const key=makeFullKey(f,l);
-      const uid=currentUser.uid, email=currentUser.email||'';
+    // ===== Profiel opslaan met unieke naam =====
+    saveProfile.onclick = async ()=>{
+      const f = firstName.value.trim(); const l = lastName.value.trim();
+      if(!f||!l){return alert('Vul zowel voornaam als achternaam in.');}
+      const newKey = makeFullKey(f,l);
+      const uid = currentUser.uid; const email = currentUser.email||'';
+
+      const oldProf = await loadProfile(uid);
+      const oldKey = (oldProf && oldProf.fullKey) ? oldProf.fullKey : '';
+
       try{
-        await runTransaction(db,async(tx)=>{
-          const ref=doc(db,'nameIndex',key);const s=await tx.get(ref);
-          if(s.exists()&&s.data().uid!==uid) throw new Error('Naam in gebruik');
-          tx.set(ref,{uid,email,fullKey:key});
-          tx.set(doc(db,'profiles',uid),{firstName:f,lastName:l,fullKey:key,email},{merge:true});
+        await runTransaction(db, async (tx)=>{
+          // 1) vrijgeven oude naam-index (indien veranderd en eigendom van mij)
+          if(oldKey && oldKey !== newKey){
+            const oldRef = doc(db,'nameIndex', oldKey);
+            const oldSnap = await tx.get(oldRef);
+            if(oldSnap.exists() && oldSnap.data().uid === uid){ tx.delete(oldRef); }
+          }
+          // 2) claim nieuwe naam-index (unique)
+          const ref = doc(db,'nameIndex', newKey);
+          const snap = await tx.get(ref);
+          if(snap.exists() && snap.data().uid !== uid){
+            throw new Error('Deze naam is al in gebruik bij een ander account. Kies een variant.');
+          }
+          tx.set(ref, { uid: uid, email: email, fullName: (f + ' ' + l), fullKey: newKey });
+          // 3) profiel opslaan met fullKey
+          tx.set(doc(db,'profiles', uid), { firstName: f, lastName: l, email: email, fullKey: newKey }, { merge: true });
         });
-        await setDoc(doc(db,'totals',uid),{cents:0,deleted:false},{merge:true});
-        alert('Profiel opgeslagen.');
-      }catch(e){alert(e.message);}
+        profileSection.classList.add('hidden');
+        await loadAccessibleAccounts();
+      }catch(e){
+        const code = (e && e.code) ? String(e.code) : '';
+        const msg  = (e && e.message) ? String(e.message) : '';
+        let nice = '';
+        if (msg.includes('Deze naam is al in gebruik')) {
+          nice = msg; // unieke naam al bezet
+        } else if (code.includes('permission-denied') || msg.toLowerCase().includes('permission')) {
+          nice = 'Opslaan geblokkeerd door Firestore Rules. Publiceer de nieuwste regels: nameIndex read/write en profiles write met nameIndex‑check.';
+        } else {
+          nice = msg || 'Kon profiel niet opslaan.';
+        }
+        setStatus(nice);
+        alert(nice);
+      }
     };
+
+    // ===== Labels op basis van profiles =====
+    async function labelForAccount(uid){
+      if(uid===currentUser.uid){
+        const me = await loadProfile(uid);
+        if(me && me.firstName && me.lastName){ return `${me.firstName} ${me.lastName} (eigen)`; }
+        return `${currentUser.email||uid} (eigen)`;
+      }
+      const p = await loadProfile(uid);
+      if(p && p.firstName && p.lastName){ return `${p.firstName} ${p.lastName}`; }
+      return uid; // fallback
+    }
+
+    // ===== Accounts laden (filter: niet-verwijderd) =====
+    async function loadAccessibleAccounts(){
+      accountSelect.innerHTML='';
+      const uid=currentUser.uid; const email=currentUser.email;
+      await ensureAccountDoc(uid);
+
+      const options = new Set();
+      // eigen rekening alleen tonen als niet verwijderd
+      const ownRef = doc(db,'totals',uid); const ownSnap = await getDoc(ownRef);
+      if(ownSnap.exists() && ownSnap.data().deleted!==true){ options.add(uid); }
+
+      // viewer/editor via UID/e-mail (alleen niet-verwijderde)
+      const qList = [
+        query(collection(db,'totals'), where('deleted','==',false), where('viewers','array-contains',uid)),
+        query(collection(db,'totals'), where('deleted','==',false), where('viewerEmails','array-contains',email)),
+        query(collection(db,'totals'), where('deleted','==',false), where('editors','array-contains',uid)),
+        query(collection(db,'totals'), where('deleted','==',false), where('editorEmails','array-contains',email)),
+      ];
+      for(const qy of qList){ (await getDocs(qy)).forEach(d=> options.add(d.id)); }
+
+      if(isAdmin){
+        const all = await getDocs(query(collection(db,'totals'), where('deleted','==',false)));
+        all.forEach(d=> options.add(d.id));
+      }
+
+      // labels
+      const ids = Array.from(options);
+      for(const id of ids){
+        const o=document.createElement('option'); o.value=id; o.textContent=await labelForAccount(id); accountSelect.appendChild(o);
+      }
+      accountPicker.classList.remove('hidden');
+      if(ids.length>0){ selectAccount(ids.includes(uid)?uid:ids[0]); }
+    }
+
+    refreshBtn.onclick=()=>loadAccessibleAccounts();
+    accountSelect.onchange=()=>selectAccount(accountSelect.value);
+
+    async function selectAccount(accountId){
+      selectedAccountId=accountId;
+      if(unsubscribeTotal){unsubscribeTotal(); unsubscribeTotal=null;}
+      const ref=await ensureAccountDoc(accountId);
+      // Als account gemarkeerd is als verwijderd: verberg
+      const snap = await getDoc(ref); if(snap.exists() && snap.data().deleted===true){ totalSection.classList.add('hidden'); editorControls.classList.add('hidden'); return; }
+
+      unsubscribeTotal = onSnapshot(ref, s=>{$1}, (err)=>{
+        const code = err?.code || '';
+        if (String(code).includes('permission-denied')) {
+          setStatus('Geen leesrechten (Firestore Rules). Publiceer regels en controleer toegang.');
+        }
+      });
+      totalSection.classList.remove('hidden');
+
+      // Edit rechten
+      let canEdit = isAdmin || (currentUser.uid===accountId);
+      try{
+        const s = await getDoc(ref); const d=s.data();
+        if(d){
+          if(Array.isArray(d.editors)&&d.editors.includes(currentUser.uid)) canEdit=true;
+          if(Array.isArray(d.editorEmails)&&d.editorEmails.includes(currentUser.email)) canEdit=true;
+        }
+      }catch{}
+      editorControls.classList.toggle('hidden', !canEdit);
+    }
+
+    // ===== Transacties =====
+    el('add').onclick=async()=>{
+      if(!selectedAccountId)return; const cents=parseEuro(amountInput.value); if(cents===null)return setStatus('Voer geldig bedrag in');
+      await runTransaction(db, async (tx)=>{
+        const r=doc(db,'totals',selectedAccountId); const s=await tx.get(r);
+        const d=s.exists()?s.data():{cents:0,deleted:false}; if(d.deleted===true) throw new Error('Rekening is verwijderd');
+        const cur=d.cents||0; tx.set(r,{cents:cur+cents},{merge:true});
+      });
+      amountInput.value=''; setStatus('Toegevoegd.');
+    };
+    el('reset').onclick=async()=>{
+      if(!selectedAccountId)return;
+      await setDoc(doc(db,'totals',selectedAccountId),{cents:0},{merge:true}); setStatus('Totaal gereset.');
+    };
+
+    // ===== Admin beheer =====
+    createAccBtn.onclick=async()=>{
+      const acc=adminAccountUid.value.trim(); if(!acc) return alert('Vul rekening-ID (UID) in');
+      await ensureAccountDoc(acc); await loadRights(acc); alert('Rekening aangemaakt/geïnitialiseerd');
+    };
+    deleteAccBtn.onclick=async()=>{
+      const acc=adminAccountUid.value.trim(); if(!acc) return alert('Vul rekening-ID (UID) in');
+      await setDoc(doc(db,'totals',acc),{deleted:true},{merge:true});
+      await loadRights(acc); setStatus('Rekening gemarkeerd als verwijderd.');
+    };
+    addViewerBtn.onclick=async()=>{
+      const acc=adminAccountUid.value.trim(); const v=viewerUid.value.trim(); if(!acc||!v) return alert('Vul rekening-ID en viewer in');
+      const field=v.includes('@')?'viewerEmails':'viewers'; await updateDoc(await ensureAccountDoc(acc),{[field]:arrayUnion(v)});
+      viewerUid.value=''; await loadRights(acc);
+    };
+    addEditorBtn.onclick=async()=>{
+      const acc=adminAccountUid.value.trim(); const e=editorUid.value.trim(); if(!acc||!e) return alert('Vul rekening-ID en editor in');
+      const field=e.includes('@')?'editorEmails':'editors'; await updateDoc(await ensureAccountDoc(acc),{[field]:arrayUnion(e)});
+      editorUid.value=''; await loadRights(acc);
+    };
+    removeAccessBtn.onclick=async()=>{
+      const acc=adminAccountUid.value.trim(); const u=removeUid.value.trim(); if(!acc||!u) return alert('Vul rekening-ID en UID/e-mail in');
+      await updateDoc(await ensureAccountDoc(acc),{viewers:arrayRemove(u),editors:arrayRemove(u),viewerEmails:arrayRemove(u),editorEmails:arrayRemove(u)});
+      removeUid.value=''; await loadRights(acc);
+    };
+
+    async function loadRights(acc){
+      rightsAccount.textContent=acc||'—'; rightsList.innerHTML=''; if(!acc) return;
+      const s=await getDoc(doc(db,'totals',acc)); if(!s.exists()){rightsList.textContent='(Rekening bestaat nog niet)'; return;}
+      const d=s.data(); const make=(name,list)=>`<div class="chip">${name} (${(list||[]).length})</div><div>${(list||[]).map(v=>`<code>${v}</code>`).join(' ')||'—'}</div>`;
+      rightsList.innerHTML = `<div class="chip">Verwijderd</div> <div>${d.deleted===true?'ja':'nee'}</div>`+
+        make('Viewers',d.viewers)+make('ViewerEmails',d.viewerEmails)+make('Editors',d.editors)+make('EditorEmails',d.editorEmails);
+    }
   </script>
 </body>
 </html>
